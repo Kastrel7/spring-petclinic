@@ -111,10 +111,10 @@ pipeline {
                     nohup java -jar ${DEV_DIR}/app.jar \
                         --server.port=${DEV_PORT} \
                         --spring.profiles.active=default \
-                        > /tmp/petclinic-dev/app.log 2>&1 &
-                    echo $! > ${DEV_DIR}/app.pid
-                    disown $!
-                    echo "Dev deployment started with PID $(cat ${DEV_DIR}/app.pid)"
+                        > ${DEV_DIR}/app.log 2>&1 &
+                    echo \$! > ${DEV_DIR}/app.pid
+                    disown \$!
+                    echo "Dev deployment started with PID \$(cat ${DEV_DIR}/app.pid)"
                 """
             }
         }
