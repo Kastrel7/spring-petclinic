@@ -18,6 +18,7 @@ pipeline {
         DEV_DIR       = '/tmp/petclinic-dev'
         STAGING_DIR   = '/tmp/petclinic-staging'
         DOCKERHUB_REPO = 'kastrel7/spring-petclinic'
+        HOST_IP       = '192.168.178.141'
     }
 
     options {
@@ -147,11 +148,11 @@ pipeline {
 
                     for i in \$(seq 1 12); do
                         STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \
-                            http://localhost:${DEV_PORT}/actuator/health || echo "000")
+                            http://${HOST_IP}:${DEV_PORT}/actuator/health || echo "000")
 
                         if [ "\$STATUS" = "200" ]; then
                             echo "Smoke test PASSED - App is UP on dev (HTTP \$STATUS)"
-                            curl -s http://localhost:${DEV_PORT}/actuator/health
+                            curl -s http://${HOST_IP}:${DEV_PORT}/actuator/health
                             exit 0
                         fi
 
@@ -204,11 +205,11 @@ pipeline {
 
                     for i in \$(seq 1 12); do
                         STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \
-                            http://localhost:${STAGING_PORT}/actuator/health || echo "000")
+                            http://${HOST_IP}:${STAGING_PORT}/actuator/health || echo "000")
 
                         if [ "\$STATUS" = "200" ]; then
                             echo "Smoke test PASSED - App is UP on staging (HTTP \$STATUS)"
-                            curl -s http://localhost:${STAGING_PORT}/actuator/health
+                            curl -s http://${HOST_IP}:${STAGING_PORT}/actuator/health
                             exit 0
                         fi
 
