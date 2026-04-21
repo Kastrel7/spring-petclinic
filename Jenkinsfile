@@ -1,35 +1,34 @@
 pipeline {
     agent any
 
-    // ── Tool aliases must match names configured in Jenkins > Manage Jenkins > Tools ──
     tools {
         maven 'Maven-3.9'
         jdk   'JDK-17'
     }
 
     environment {
-        // SonarQube server name as configured in Jenkins > Configure System
-        SONAR_SERVER      = 'SonarQube'
-        // The token credential ID you saved in Jenkins > Credentials
-        SONAR_TOKEN       = credentials('sonar-token')
-        // Slack channel to post notifications to
-        SLACK_CHANNEL     = 'C0AUPNCPP6D'
-        // Jenkins credential ID holding your GitHub personal access token
-        GITHUB_CREDS      = 'github-credentials'
+        SONAR_SERVER  = 'SonarQube'
+        SONAR_TOKEN   = credentials('sonar-token')
+        GITHUB_CREDS  = 'github-credentials'
+        // Port the app will run on inside the Jenkins container for Dev
+        DEV_PORT      = '8081'
+        // Port for Staging
+        STAGING_PORT  = '8082'
+        // Path where the JAR will be copied for each environment
+        DEV_DIR       = '/tmp/petclinic-dev'
+        STAGING_DIR   = '/tmp/petclinic-staging'
     }
 
     options {
-        // Keep only the last 10 builds to save disk space
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        // Fail the build if it runs for more than 30 minutes
-        timeout(time: 30, unit: 'MINUTES')
-        // Add timestamps to all console log lines
+        // Increased to 60 min to account for the manual approval wait time
+        timeout(time: 60, unit: 'MINUTES')
         timestamps()
     }
 
     stages {
 
-        // ── Stage 1: Pull the source code from GitHub ──────────────────────────────
+        // ── Stage 1: Checkout ──────────────────────────────────────────────────────
         stage('Checkout') {
             steps {
                 checkout([
@@ -44,24 +43,21 @@ pipeline {
             }
         }
 
-        // ── Stage 2: Compile the Java source code ──────────────────────────────────
+        // ── Stage 2: Compile ───────────────────────────────────────────────────────
         stage('Build') {
             steps {
-                // -B = batch mode (no progress bars), cleaner logs in Jenkins
                 sh 'mvn -B clean compile'
             }
         }
 
-        // ── Stage 3: Run JUnit tests and generate JaCoCo coverage report ───────────
+        // ── Stage 3: Unit Tests + Coverage ────────────────────────────────────────
         stage('Unit Tests') {
             steps {
                 sh 'mvn -B test -Dtest="!PostgresIntegrationTests"'
             }
             post {
                 always {
-                    // Publish JUnit test results so Jenkins shows pass/fail counts
                     junit '**/target/surefire-reports/*.xml'
-                    // Publish JaCoCo coverage report as a Jenkins graph
                     jacoco(
                         execPattern:    '**/target/jacoco.exec',
                         classPattern:   '**/target/classes',
@@ -71,20 +67,17 @@ pipeline {
             }
         }
 
-        // ── Stage 4: Package the app into a runnable JAR ───────────────────────────
+        // ── Stage 4: Package ───────────────────────────────────────────────────────
         stage('Package') {
             steps {
-                // -DskipTests skips running tests again since we already ran them
                 sh 'mvn -B package -DskipTests'
-                // Archive the JAR so it's downloadable from the Jenkins build page
                 archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
             }
         }
 
-        // ── Stage 5: Run SonarQube static analysis ─────────────────────────────────
+        // ── Stage 5: SonarQube Analysis ───────────────────────────────────────────
         stage('SonarQube Analysis') {
             steps {
-                // withSonarQubeEnv injects SONAR_HOST_URL and auth automatically
                 withSonarQubeEnv("${SONAR_SERVER}") {
                     sh """
                         mvn -B sonar:sonar \
@@ -97,43 +90,160 @@ pipeline {
             }
         }
 
-        // ── Stage 6: Wait for SonarQube to process results and check the gate ──────
+        // ── Stage 6: Quality Gate ─────────────────────────────────────────────────
         stage('Quality Gate') {
             steps {
-                // Pauses the pipeline and polls SonarQube until analysis is complete
-                // abortPipeline: true means the build fails if the gate fails
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
             }
         }
+
+        // ── Stage 7: Deploy to Dev ────────────────────────────────────────────────
+        // Copies the JAR into a dev directory and starts it on DEV_PORT.
+        // Any existing process on that port is killed first for a clean deploy.
+        stage('Deploy to Dev') {
+            steps {
+                sh """
+                    mkdir -p ${DEV_DIR}
+
+                    # Kill any existing process on the dev port
+                    fuser -k ${DEV_PORT}/tcp || true
+
+                    # Copy the freshly built JAR into the dev directory
+                    cp target/spring-petclinic-*.jar ${DEV_DIR}/app.jar
+
+                    # Start in the background, save PID for later management
+                    nohup java -jar ${DEV_DIR}/app.jar \
+                        --server.port=${DEV_PORT} \
+                        --spring.profiles.active=default \
+                        > ${DEV_DIR}/app.log 2>&1 &
+
+                    echo \$! > ${DEV_DIR}/app.pid
+                    echo "Dev deployment started with PID \$(cat ${DEV_DIR}/app.pid)"
+                """
+            }
+        }
+
+        // ── Stage 8: Smoke Test (Dev) ─────────────────────────────────────────────
+        // Polls the Spring Boot Actuator health endpoint every 5s for up to 60s.
+        // Fails the build if the app does not report UP within that window.
+        stage('Smoke Test (Dev)') {
+            steps {
+                sh """
+                    echo "Waiting for app to start on port ${DEV_PORT}..."
+
+                    for i in \$(seq 1 12); do
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \
+                            http://localhost:${DEV_PORT}/actuator/health || echo "000")
+
+                        if [ "\$STATUS" = "200" ]; then
+                            echo "Smoke test PASSED - App is UP on dev (HTTP \$STATUS)"
+                            curl -s http://localhost:${DEV_PORT}/actuator/health
+                            exit 0
+                        fi
+
+                        echo "Attempt \$i/12 - HTTP \$STATUS - retrying in 5s..."
+                        sleep 5
+                    done
+
+                    echo "SMOKE TEST FAILED - App did not start within 60 seconds"
+                    cat ${DEV_DIR}/app.log
+                    exit 1
+                """
+            }
+        }
+
+        // ── Stage 9: Manual Approval Gate ────────────────────────────────────────
+        // Pauses the pipeline and waits for a human to approve promotion.
+        // Auto-aborts after 10 minutes if no action is taken.
+        stage('Approval: Promote to Staging?') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    input message: 'Dev smoke tests passed. Promote to Staging?',
+                          ok: 'Yes, promote to Staging',
+                          submitter: 'admin'
+                }
+            }
+        }
+
+        // ── Stage 10: Deploy to Staging ───────────────────────────────────────────
+        // Promotes the same JAR that passed Dev smoke tests to the Staging environment.
+        stage('Deploy to Staging') {
+            steps {
+                sh """
+                    mkdir -p ${STAGING_DIR}
+
+                    fuser -k ${STAGING_PORT}/tcp || true
+
+                    cp target/spring-petclinic-*.jar ${STAGING_DIR}/app.jar
+
+                    nohup java -jar ${STAGING_DIR}/app.jar \
+                        --server.port=${STAGING_PORT} \
+                        --spring.profiles.active=default \
+                        > ${STAGING_DIR}/app.log 2>&1 &
+
+                    echo \$! > ${STAGING_DIR}/app.pid
+                    echo "Staging deployment started with PID \$(cat ${STAGING_DIR}/app.pid)"
+                """
+            }
+        }
+
+        // ── Stage 11: Smoke Test (Staging) ───────────────────────────────────────
+        // Same health check pattern as Dev but against the staging port.
+        stage('Smoke Test (Staging)') {
+            steps {
+                sh """
+                    echo "Waiting for app to start on staging port ${STAGING_PORT}..."
+
+                    for i in \$(seq 1 12); do
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \
+                            http://localhost:${STAGING_PORT}/actuator/health || echo "000")
+
+                        if [ "\$STATUS" = "200" ]; then
+                            echo "Smoke test PASSED - App is UP on staging (HTTP \$STATUS)"
+                            curl -s http://localhost:${STAGING_PORT}/actuator/health
+                            exit 0
+                        fi
+
+                        echo "Attempt \$i/12 - HTTP \$STATUS - retrying in 5s..."
+                        sleep 5
+                    done
+
+                    echo "SMOKE TEST FAILED - Staging app did not start within 60 seconds"
+                    cat ${STAGING_DIR}/app.log
+                    exit 1
+                """
+            }
+        }
     }
 
-    // ── Post-build actions: send Slack notification regardless of outcome ──────────
+    // ── Post-build Slack notifications ────────────────────────────────────────────
     post {
         success {
             withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
                 sh """
-                    curl -X POST -H 'Content-type: application/json' \
-                    --data '{"text":"BUILD SUCCESSFUL :white_check_mark: - ${env.JOB_NAME} #${env.BUILD_NUMBER}"}' \
+                    curl -s -X POST -H 'Content-type: application/json' \
+                    --data '{"text":"BUILD SUCCESSFUL :white_check_mark: - ${env.JOB_NAME} #${env.BUILD_NUMBER} - Deployed to Staging"}' \
                     \$SLACK_WEBHOOK
                 """
-            }            
+            }
         }
         failure {
             withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
                 sh """
-                    curl -X POST -H 'Content-type: application/json' \
+                    curl -s -X POST -H 'Content-type: application/json' \
                     --data '{"text":"BUILD FAILED :x: - ${env.JOB_NAME} #${env.BUILD_NUMBER}"}' \
                     \$SLACK_WEBHOOK
                 """
             }
         }
-        unstable {
+        aborted {
+            // Fires when the manual approval gate times out or is rejected
             withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
                 sh """
-                    curl -X POST -H 'Content-type: application/json' \
-                    --data '{"text":"BUILD UNSTABLE :warning: - ${env.JOB_NAME} #${env.BUILD_NUMBER}"}' \
+                    curl -s -X POST -H 'Content-type: application/json' \
+                    --data '{"text":"BUILD ABORTED :no_entry: - ${env.JOB_NAME} #${env.BUILD_NUMBER} - Staging promotion was not approved"}' \
                     \$SLACK_WEBHOOK
                 """
             }
