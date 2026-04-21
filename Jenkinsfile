@@ -17,6 +17,7 @@ pipeline {
         // Path where the JAR will be copied for each environment
         DEV_DIR       = '/tmp/petclinic-dev'
         STAGING_DIR   = '/tmp/petclinic-staging'
+        DOCKERHUB_REPO = 'kastrel7/spring-petclinic'
     }
 
     options {
@@ -99,27 +100,44 @@ pipeline {
             }
         }
 
-        // ── Stage 7: Deploy to Dev ────────────────────────────────────────────────
+        // ── Stage 7: Build & Push Docker Image ───────────────────────────────
+        stage('Build & Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''#!/bin/bash
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                        docker build -t kastrel7/spring-petclinic:latest \
+                                    -t kastrel7/spring-petclinic:${BUILD_NUMBER} .
+                        docker push kastrel7/spring-petclinic:latest
+                        docker push kastrel7/spring-petclinic:${BUILD_NUMBER}
+                        docker logout
+                    '''
+                }
+            }
+        }
+
+        // ── Stage 8: Deploy to Dev ────────────────────────────────────────────────
         // Copies the JAR into a dev directory and starts it on DEV_PORT.
         // Any existing process on that port is killed first for a clean deploy.
         stage('Deploy to Dev') {
             steps {
                 sh '''#!/bin/bash
-                    mkdir -p ${DEV_DIR}
-                    fuser -k ${DEV_PORT}/tcp || true
-                    cp target/spring-petclinic-4.0.0-SNAPSHOT.jar ${DEV_DIR}/app.jar
-                    nohup java -jar ${DEV_DIR}/app.jar \
-                        --server.port=${DEV_PORT} \
-                        --spring.profiles.active=default \
-                        > ${DEV_DIR}/app.log 2>&1 &
-                    echo \$! > ${DEV_DIR}/app.pid
-                    disown \$!
-                    echo "Dev deployment started with PID \$(cat ${DEV_DIR}/app.pid)"
+                    docker stop petclinic-dev || true
+                    docker rm petclinic-dev || true
+                    docker run -d \
+                        --name petclinic-dev \
+                        -p 8086:8080 \
+                        kastrel7/spring-petclinic:latest
+                    echo "Dev container started"
                 '''
             }
         }
 
-        // ── Stage 8: Smoke Test (Dev) ─────────────────────────────────────────────
+        // ── Stage 9: Smoke Test (Dev) ─────────────────────────────────────────────
         // Polls the Spring Boot Actuator health endpoint every 5s for up to 60s.
         // Fails the build if the app does not report UP within that window.
         stage('Smoke Test (Dev)') {
@@ -148,7 +166,7 @@ pipeline {
             }
         }
 
-        // ── Stage 9: Manual Approval Gate ────────────────────────────────────────
+        // ── Stage 10: Manual Approval Gate ────────────────────────────────────────
         // Pauses the pipeline and waits for a human to approve promotion.
         // Auto-aborts after 10 minutes if no action is taken.
         stage('Approval: Promote to Staging?') {
@@ -161,30 +179,23 @@ pipeline {
             }
         }
 
-        // ── Stage 10: Deploy to Staging ───────────────────────────────────────────
+        // ── Stage 11: Deploy to Staging ───────────────────────────────────────────
         // Promotes the same JAR that passed Dev smoke tests to the Staging environment.
         stage('Deploy to Staging') {
             steps {
                 sh '''#!/bin/bash
-                    mkdir -p ${STAGING_DIR}
-
-                    fuser -k ${STAGING_PORT}/tcp || true
-
-                    cp target/spring-petclinic-*.jar ${STAGING_DIR}/app.jar
-
-                    nohup java -jar ${STAGING_DIR}/app.jar \
-                        --server.port=${STAGING_PORT} \
-                        --spring.profiles.active=default \
-                        > ${STAGING_DIR}/app.log 2>&1 &
-
-                    echo \$! > ${STAGING_DIR}/app.pid
-                    disown \$!
-                    echo "Staging deployment started with PID \$(cat ${STAGING_DIR}/app.pid)"
+                    docker stop petclinic-staging || true
+                    docker rm petclinic-staging || true
+                    docker run -d \
+                        --name petclinic-staging \
+                        -p 8087:8080 \
+                        kastrel7/spring-petclinic:latest
+                    echo "Staging container started"
                 '''
             }
         }
 
-        // ── Stage 11: Smoke Test (Staging) ───────────────────────────────────────
+        // ── Stage 12: Smoke Test (Staging) ───────────────────────────────────────
         // Same health check pattern as Dev but against the staging port.
         stage('Smoke Test (Staging)') {
             steps {
@@ -209,6 +220,17 @@ pipeline {
                     cat ${STAGING_DIR}/app.log
                     exit 1
                 """
+            }
+        }
+
+        // ── Stage 13: Ansible: Provision & Deploy ───────────────────────────────────────
+        stage('Ansible: Provision & Deploy') {
+            steps {
+                sh '''#!/bin/bash
+                    cd ansible
+                    ansible-playbook -i inventory.ini setup-environment.yml
+                    ansible-playbook -i inventory.ini deploy-container.yml
+                '''
             }
         }
     }
