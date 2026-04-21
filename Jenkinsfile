@@ -130,7 +130,7 @@ pipeline {
                     docker rm petclinic-dev || true
                     docker run -d \
                         --name petclinic-dev \
-                        -p 8086:8080 \
+                        -p 8081:8080 \
                         kastrel7/spring-petclinic:latest
                     echo "Dev container started"
                 '''
@@ -188,7 +188,7 @@ pipeline {
                     docker rm petclinic-staging || true
                     docker run -d \
                         --name petclinic-staging \
-                        -p 8087:8080 \
+                        -p 8082:8080 \
                         kastrel7/spring-petclinic:latest
                     echo "Staging container started"
                 '''
