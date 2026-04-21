@@ -106,21 +106,15 @@ pipeline {
             steps {
                 sh """
                     mkdir -p ${DEV_DIR}
-
-                    # Kill any existing process on the dev port
                     fuser -k ${DEV_PORT}/tcp || true
-
-                    # Copy the freshly built JAR into the dev directory
-                    cp target/spring-petclinic-*.jar ${DEV_DIR}/app.jar
-
-                    # Start in the background, save PID for later management
+                    cp target/spring-petclinic-4.0.0-SNAPSHOT.jar ${DEV_DIR}/app.jar
                     nohup java -jar ${DEV_DIR}/app.jar \
                         --server.port=${DEV_PORT} \
                         --spring.profiles.active=default \
                         > ${DEV_DIR}/app.log 2>&1 &
-
-                    echo \$! > ${DEV_DIR}/app.pid
-                    echo "Dev deployment started with PID \$(cat ${DEV_DIR}/app.pid)"
+                    echo $! > ${DEV_DIR}/app.pid
+                    disown $!
+                    echo "Dev deployment started with PID $(cat ${DEV_DIR}/app.pid)"
                 """
             }
         }
@@ -184,6 +178,7 @@ pipeline {
                         > ${STAGING_DIR}/app.log 2>&1 &
 
                     echo \$! > ${STAGING_DIR}/app.pid
+                    disown \$!
                     echo "Staging deployment started with PID \$(cat ${STAGING_DIR}/app.pid)"
                 """
             }
