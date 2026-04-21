@@ -112,45 +112,31 @@ pipeline {
     // ── Post-build actions: send Slack notification regardless of outcome ──────────
     post {
         success {
-            slackSend(
-                channel: "${SLACK_CHANNEL}",
-                color: 'good',
-                message: """
-                    *BUILD SUCCESSFUL* :white_check_mark:
-                    *Job:* ${env.JOB_NAME}
-                    *Build:* #${env.BUILD_NUMBER}
-                    *Commit:* ${env.GIT_COMMIT?.take(7)}
-                    *Duration:* ${currentBuild.durationString}
-                    <${env.BUILD_URL}|View Build>
-                """.stripIndent()
-            )
+            withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
+                sh """
+                    curl -X POST -H 'Content-type: application/json' \
+                    --data '{"text":"BUILD SUCCESSFUL :white_check_mark: - ${env.JOB_NAME} #${env.BUILD_NUMBER}"}' \
+                    \$SLACK_WEBHOOK
+                """
+            }            
         }
         failure {
-            slackSend(
-                channel: "${SLACK_CHANNEL}",
-                color: 'danger',
-                message: """
-                    *BUILD FAILED* :x:
-                    *Job:* ${env.JOB_NAME}
-                    *Build:* #${env.BUILD_NUMBER}
-                    *Commit:* ${env.GIT_COMMIT?.take(7)}
-                    *Stage Failed:* ${env.STAGE_NAME}
-                    <${env.BUILD_URL}|View Build>
-                """.stripIndent()
-            )
+            withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
+                sh """
+                    curl -X POST -H 'Content-type: application/json' \
+                    --data '{"text":"BUILD FAILED :x: - ${env.JOB_NAME} #${env.BUILD_NUMBER}"}' \
+                    \$SLACK_WEBHOOK
+                """
+            }
         }
         unstable {
-            slackSend(
-                channel: "${SLACK_CHANNEL}",
-                color: 'warning',
-                message: """
-                    *BUILD UNSTABLE* :warning:
-                    *Job:* ${env.JOB_NAME}
-                    *Build:* #${env.BUILD_NUMBER}
-                    *Commit:* ${env.GIT_COMMIT?.take(7)}
-                    <${env.BUILD_URL}|View Build>
-                """.stripIndent()
-            )
+            withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
+                sh """
+                    curl -X POST -H 'Content-type: application/json' \
+                    --data '{"text":"BUILD UNSTABBLE :warning: - ${env.JOB_NAME} #${env.BUILD_NUMBER}"}' \
+                    \$SLACK_WEBHOOK
+                """
+            }
         }
     }
 }
