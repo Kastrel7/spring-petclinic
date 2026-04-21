@@ -104,7 +104,7 @@ pipeline {
         // Any existing process on that port is killed first for a clean deploy.
         stage('Deploy to Dev') {
             steps {
-                sh """
+                sh '''#!/bin/bash
                     mkdir -p ${DEV_DIR}
                     fuser -k ${DEV_PORT}/tcp || true
                     cp target/spring-petclinic-4.0.0-SNAPSHOT.jar ${DEV_DIR}/app.jar
@@ -115,7 +115,7 @@ pipeline {
                     echo \$! > ${DEV_DIR}/app.pid
                     disown \$!
                     echo "Dev deployment started with PID \$(cat ${DEV_DIR}/app.pid)"
-                """
+                '''
             }
         }
 
@@ -165,7 +165,7 @@ pipeline {
         // Promotes the same JAR that passed Dev smoke tests to the Staging environment.
         stage('Deploy to Staging') {
             steps {
-                sh """
+                sh '''#!/bin/bash
                     mkdir -p ${STAGING_DIR}
 
                     fuser -k ${STAGING_PORT}/tcp || true
@@ -180,7 +180,7 @@ pipeline {
                     echo \$! > ${STAGING_DIR}/app.pid
                     disown \$!
                     echo "Staging deployment started with PID \$(cat ${STAGING_DIR}/app.pid)"
-                """
+                '''
             }
         }
 
