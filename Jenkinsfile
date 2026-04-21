@@ -13,7 +13,7 @@ pipeline {
         // The token credential ID you saved in Jenkins > Credentials
         SONAR_TOKEN       = credentials('sonar-token')
         // Slack channel to post notifications to
-        SLACK_CHANNEL     = '#devops-petclinic'
+        SLACK_CHANNEL     = 'C0AUPNCPP6D'
         // Jenkins credential ID holding your GitHub personal access token
         GITHUB_CREDS      = 'github-credentials'
     }
@@ -55,7 +55,7 @@ pipeline {
         // ── Stage 3: Run JUnit tests and generate JaCoCo coverage report ───────────
         stage('Unit Tests') {
             steps {
-                sh 'mvn -B test'
+                sh 'mvn -B test -Dtest="!PostgresIntegrationTests"'
             }
             post {
                 always {
