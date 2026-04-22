@@ -187,18 +187,18 @@ pipeline {
             }
         }
 
-        // ── Manual Approval Gate ────────────────────────────────────────
-        // Pauses the pipeline and waits for a human to approve promotion.
-        // Auto-aborts after 10 minutes if no action is taken.
-        stage('Approval: Promote to Staging?') {
-            steps {
-                timeout(time: 10, unit: 'MINUTES') {
-                    input message: 'Dev smoke tests passed. Promote to Staging?',
-                          ok: 'Yes, promote to Staging',
-                          submitter: 'admin'
-                }
-            }
-        }
+        // // ── Manual Approval Gate ────────────────────────────────────────
+        // // Pauses the pipeline and waits for a human to approve promotion.
+        // // Auto-aborts after 10 minutes if no action is taken.
+        // stage('Approval: Promote to Staging?') {
+        //     steps {
+        //         timeout(time: 10, unit: 'MINUTES') {
+        //             input message: 'Dev smoke tests passed. Promote to Staging?',
+        //                   ok: 'Yes, promote to Staging',
+        //                   submitter: 'admin'
+        //         }
+        //     }
+        // }
 
         // // ── Deploy to Staging ───────────────────────────────────────────
         // // Promotes the same JAR that passed Dev smoke tests to the Staging environment.
