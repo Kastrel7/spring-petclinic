@@ -234,6 +234,16 @@ pipeline {
                 '''
             }
         }
+
+        // ── Stage 14: Deploy to EC2 ───────────────────────────────────────
+        stage('Deploy to EC2') {
+            steps {
+                sh '''#!/bin/bash
+                    cd ansible
+                    ansible-playbook -i inventory.ini provision-ec2.yml
+                '''
+            }
+        }
     }
 
     // ── Post-build Slack notifications ────────────────────────────────────────────

@@ -1,0 +1,42 @@
+---
+- name: Provision EC2 for PetClinic
+  hosts: ec2
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install Docker
+      apt:
+        name: docker.io
+        state: present
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Pull PetClinic Docker image
+      shell: docker pull kastrel7/spring-petclinic:latest
+
+    - name: Stop existing container if running
+      shell: docker stop petclinic || true
+
+    - name: Remove existing container if present
+      shell: docker rm petclinic || true
+
+    - name: Run PetClinic container
+      shell: |
+        docker run -d \
+          --name petclinic \
+          --restart unless-stopped \
+          -p 8080:8080 \
+          kastrel7/spring-petclinic:latest
