@@ -7,18 +7,16 @@ pipeline {
     }
 
     environment {
-        SONAR_SERVER  = 'SonarQube'
-        SONAR_TOKEN   = credentials('sonar-token')
-        GITHUB_CREDS  = 'github-credentials'
-        // Port the app will run on inside the Jenkins container for Dev
-        DEV_PORT      = '8081'
-        // Port for Staging
-        STAGING_PORT  = '8082'
-        // Path where the JAR will be copied for each environment
-        DEV_DIR       = '/tmp/petclinic-dev'
-        STAGING_DIR   = '/tmp/petclinic-staging'
+        SONAR_SERVER   = 'SonarQube'
+        SONAR_TOKEN    = credentials('sonar-token')
+        GITHUB_CREDS   = 'github-credentials'
+        DEV_PORT       = '8081'
+        STAGING_PORT   = '8082'
+        DEV_DIR        = '/tmp/petclinic-dev'
+        STAGING_DIR    = '/tmp/petclinic-staging'
         DOCKERHUB_REPO = 'kastrel7/spring-petclinic'
-        HOST_IP       = '192.168.178.141'
+        HOST_IP        = '192.168.178.141'
+        EC2_IP         = '16.171.21.39'
     }
 
     options {
@@ -29,8 +27,19 @@ pipeline {
     }
 
     stages {
+        // ── Install Dependencies ───────────────────────────────────────────
+        stage('Install Dependencies') {
+            steps {
+                sh '''#!/bin/bash
+                    sudo apt-get update -qq
+                    which docker || sudo apt-get install -y -qq docker.io
+                    which fuser || sudo apt-get install -y -qq psmisc
+                    which ansible || sudo apt-get install -y -qq ansible
+                '''
+            }
+        }
 
-        // ── Stage 1: Checkout ──────────────────────────────────────────────────────
+        // ── Checkout ──────────────────────────────────────────────────────
         stage('Checkout') {
             steps {
                 checkout([
@@ -45,14 +54,14 @@ pipeline {
             }
         }
 
-        // ── Stage 2: Compile ───────────────────────────────────────────────────────
+        // ── Compile ───────────────────────────────────────────────────────
         stage('Build') {
             steps {
                 sh 'mvn -B clean compile'
             }
         }
 
-        // ── Stage 3: Unit Tests + Coverage ────────────────────────────────────────
+        // ── Unit Tests + Coverage ──────────────────────────────────────────
         stage('Unit Tests') {
             steps {
                 sh 'mvn -B test -Dtest="!PostgresIntegrationTests"'
@@ -69,7 +78,7 @@ pipeline {
             }
         }
 
-        // ── Stage 4: Package ───────────────────────────────────────────────────────
+        // ── Package ───────────────────────────────────────────────────────
         stage('Package') {
             steps {
                 sh 'mvn -B package -DskipTests'
@@ -77,7 +86,7 @@ pipeline {
             }
         }
 
-        // ── Stage 5: SonarQube Analysis ───────────────────────────────────────────
+        // ── SonarQube Analysis ───────────────────────────────────────────
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv("${SONAR_SERVER}") {
@@ -92,7 +101,7 @@ pipeline {
             }
         }
 
-        // ── Stage 6: Quality Gate ─────────────────────────────────────────────────
+        // ── Quality Gate ─────────────────────────────────────────────────
         stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -101,7 +110,7 @@ pipeline {
             }
         }
 
-        // ── Stage 7: Build & Push Docker Image ───────────────────────────────
+        // ── Build & Push Docker Image ───────────────────────────────
         stage('Build & Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(
@@ -121,53 +130,64 @@ pipeline {
             }
         }
 
-        // ── Stage 8: Deploy to Dev ────────────────────────────────────────────────
+        // ── Deploy to Dev ────────────────────────────────────────────────
         // Copies the JAR into a dev directory and starts it on DEV_PORT.
         // Any existing process on that port is killed first for a clean deploy.
         stage('Deploy to Dev') {
             steps {
+                // sh '''#!/bin/bash
+                //     docker stop petclinic-dev || true
+                //     docker rm petclinic-dev || true
+                //     docker run -d \
+                //         --name petclinic-dev \
+                //         -p 8081:8080 \
+                //         kastrel7/spring-petclinic:latest
+                //     echo "Dev container started"
+                // '''
+
                 sh '''#!/bin/bash
-                    docker stop petclinic-dev || true
-                    docker rm petclinic-dev || true
-                    docker run -d \
-                        --name petclinic-dev \
-                        -p 8081:8080 \
-                        kastrel7/spring-petclinic:latest
-                    echo "Dev container started"
+                    cd ansible
+                    ansible-playbook -i inventory.ini deploy-to-dev.yml
                 '''
             }
         }
 
-        // ── Stage 9: Smoke Test (Dev) ─────────────────────────────────────────────
+        // ── Smoke Test (Dev) ─────────────────────────────────────────────
         // Polls the Spring Boot Actuator health endpoint every 5s for up to 60s.
         // Fails the build if the app does not report UP within that window.
         stage('Smoke Test (Dev)') {
             steps {
-                sh """
-                    echo "Waiting for app to start on port ${DEV_PORT}..."
+                // sh """
+                //     echo "Waiting for app to start on port ${DEV_PORT}..."
 
-                    for i in \$(seq 1 12); do
-                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \
-                            http://${HOST_IP}:${DEV_PORT}/actuator/health || echo "000")
+                //     for i in \$(seq 1 12); do
+                //         STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \
+                //             http://${HOST_IP}:${DEV_PORT}/actuator/health || echo "000")
 
-                        if [ "\$STATUS" = "200" ]; then
-                            echo "Smoke test PASSED - App is UP on dev (HTTP \$STATUS)"
-                            curl -s http://${HOST_IP}:${DEV_PORT}/actuator/health
-                            exit 0
-                        fi
+                //         if [ "\$STATUS" = "200" ]; then
+                //             echo "Smoke test PASSED - App is UP on dev (HTTP \$STATUS)"
+                //             curl -s http://${HOST_IP}:${DEV_PORT}/actuator/health
+                //             exit 0
+                //         fi
 
-                        echo "Attempt \$i/12 - HTTP \$STATUS - retrying in 5s..."
-                        sleep 5
-                    done
+                //         echo "Attempt \$i/12 - HTTP \$STATUS - retrying in 5s..."
+                //         sleep 5
+                //     done
 
-                    echo "SMOKE TEST FAILED - App did not start within 60 seconds"
-                    cat ${DEV_DIR}/app.log
-                    exit 1
+                //     echo "SMOKE TEST FAILED - App did not start within 60 seconds"
+                //     cat ${DEV_DIR}/app.log
+                //     exit 1
+                // """
+
+                sh """#!/bin/bash
+                    cd ansible
+                    ansible-playbook -i inventory.ini smoke-test.yml \
+                        -e "url=http://${HOST_IP}:${DEV_PORT}/actuator/health"
                 """
             }
         }
 
-        // ── Stage 10: Manual Approval Gate ────────────────────────────────────────
+        // ── Manual Approval Gate ────────────────────────────────────────
         // Pauses the pipeline and waits for a human to approve promotion.
         // Auto-aborts after 10 minutes if no action is taken.
         stage('Approval: Promote to Staging?') {
@@ -180,68 +200,80 @@ pipeline {
             }
         }
 
-        // ── Stage 11: Deploy to Staging ───────────────────────────────────────────
-        // Promotes the same JAR that passed Dev smoke tests to the Staging environment.
-        stage('Deploy to Staging') {
-            steps {
-                sh '''#!/bin/bash
-                    docker stop petclinic-staging || true
-                    docker rm petclinic-staging || true
-                    docker run -d \
-                        --name petclinic-staging \
-                        -p 8082:8080 \
-                        kastrel7/spring-petclinic:latest
-                    echo "Staging container started"
-                '''
-            }
-        }
+        // // ── Deploy to Staging ───────────────────────────────────────────
+        // // Promotes the same JAR that passed Dev smoke tests to the Staging environment.
+        // stage('Deploy to Staging') {
+        //     steps {
+        //         // sh '''#!/bin/bash
+        //         //     docker stop petclinic-staging || true
+        //         //     docker rm petclinic-staging || true
+        //         //     docker run -d \
+        //         //         --name petclinic-staging \
+        //         //         -p 8082:8080 \
+        //         //         kastrel7/spring-petclinic:latest
+        //         //     echo "Staging container started"
+        //         // '''
 
-        // ── Stage 12: Smoke Test (Staging) ───────────────────────────────────────
-        // Same health check pattern as Dev but against the staging port.
-        stage('Smoke Test (Staging)') {
-            steps {
-                sh """
-                    echo "Waiting for app to start on staging port ${STAGING_PORT}..."
+        //         sh '''#!/bin/bash
+        //             cd ansible
+        //             ansible-playbook -i inventory.ini deploy-to-staging.yml
+        //         '''
+        //     }
+        // }
 
-                    for i in \$(seq 1 12); do
-                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \
-                            http://${HOST_IP}:${STAGING_PORT}/actuator/health || echo "000")
+        // // ── Smoke Test (Staging) ───────────────────────────────────────
+        // // Same health check pattern as Dev but against the staging port.
+        // stage('Smoke Test (Staging)') {
+        //     steps {
+        //         // sh """
+        //         //     echo "Waiting for app to start on staging port ${STAGING_PORT}..."
 
-                        if [ "\$STATUS" = "200" ]; then
-                            echo "Smoke test PASSED - App is UP on staging (HTTP \$STATUS)"
-                            curl -s http://${HOST_IP}:${STAGING_PORT}/actuator/health
-                            exit 0
-                        fi
+        //         //     for i in \$(seq 1 12); do
+        //         //         STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \
+        //         //             http://${HOST_IP}:${STAGING_PORT}/actuator/health || echo "000")
 
-                        echo "Attempt \$i/12 - HTTP \$STATUS - retrying in 5s..."
-                        sleep 5
-                    done
+        //         //         if [ "\$STATUS" = "200" ]; then
+        //         //             echo "Smoke test PASSED - App is UP on staging (HTTP \$STATUS)"
+        //         //             curl -s http://${HOST_IP}:${STAGING_PORT}/actuator/health
+        //         //             exit 0
+        //         //         fi
 
-                    echo "SMOKE TEST FAILED - Staging app did not start within 60 seconds"
-                    cat ${STAGING_DIR}/app.log
-                    exit 1
-                """
-            }
-        }
+        //         //         echo "Attempt \$i/12 - HTTP \$STATUS - retrying in 5s..."
+        //         //         sleep 5
+        //         //     done
 
-        // ── Stage 13: Ansible: Provision & Deploy ───────────────────────────────────────
-        stage('Ansible: Provision & Deploy') {
-            steps {
-                sh '''#!/bin/bash
-                    cd ansible
-                    ansible-playbook -i inventory.ini setup-environment.yml
-                    ansible-playbook -i inventory.ini deploy-container.yml
-                '''
-            }
-        }
+        //         //     echo "SMOKE TEST FAILED - Staging app did not start within 60 seconds"
+        //         //     cat ${STAGING_DIR}/app.log
+        //         //     exit 1
+        //         // """
 
-        // ── Stage 14: Deploy to EC2 ───────────────────────────────────────
-        stage('Deploy to EC2') {
+        //         sh """#!/bin/bash
+        //             cd ansible
+        //             ansible-playbook -i inventory.ini smoke-test.yml \
+        //                 -e "url=http://${HOST_IP}:${STAGING_PORT}/actuator/health"
+        //         """
+        //     }
+        // }
+
+        // ── Deploy to EC2 ───────────────────────────────────────
+        stage('Deploy to Staging (EC2)') {
             steps {
                 sh '''#!/bin/bash
                     cd ansible
                     ansible-playbook -i inventory.ini provision-ec2.yml
                 '''
+            }
+        }
+
+        // ── Smoke Test (EC2) ──────────────────────────────────────────
+        // Health check against the EC2 instance to confirm deployment succeeded.
+        stage('Smoke Test (EC2)') {
+            steps {
+                sh """#!/bin/bash
+                    cd ansible
+                    ansible-playbook -i inventory.ini smoke-test.yml \
+                        -e "url=http://${EC2_IP}:8080/actuator/health"
+                """
             }
         }
     }
@@ -252,7 +284,7 @@ pipeline {
             withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
                 sh """
                     curl -s -X POST -H 'Content-type: application/json' \
-                    --data '{"text":"BUILD SUCCESSFUL :white_check_mark: - ${env.JOB_NAME} #${env.BUILD_NUMBER} - Deployed to Staging"}' \
+                    --data '{"text":"BUILD SUCCESSFUL :white_check_mark: - ${env.JOB_NAME} #${env.BUILD_NUMBER} - Deployed to EC2"}' \
                     \$SLACK_WEBHOOK
                 """
             }

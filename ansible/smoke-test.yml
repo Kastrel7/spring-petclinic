@@ -1,0 +1,21 @@
+---
+- name: Smoke Test
+  hosts: jenkins
+  gather_facts: no
+  vars:
+    smoke_test_url: "{{ url }}"
+    smoke_test_retries: 12
+    smoke_test_delay: 5
+  tasks:
+    - name: Wait for app to become available
+      uri:
+        url: "{{ smoke_test_url }}"
+        status_code: 200
+      register: result
+      until: result.status == 200
+      retries: "{{ smoke_test_retries }}"
+      delay: "{{ smoke_test_delay }}"
+
+    - name: Print health response
+      debug:
+        msg: "Smoke test PASSED - {{ smoke_test_url }} returned {{ result.json }}"

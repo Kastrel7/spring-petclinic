@@ -1,19 +1,7 @@
 ---
-- name: Deploy PetClinic Containers
+- name: Deploy PetClinic to Staging
   hosts: jenkins
   tasks:
-    - name: Stop and remove existing dev container
-      shell: |
-        docker stop petclinic-dev || true
-        docker rm petclinic-dev || true
-
-    - name: Deploy dev container
-      shell: |
-        docker run -d \
-          --name petclinic-dev \
-          -p 8081:8080 \
-          kastrel7/spring-petclinic:latest
-
     - name: Stop and remove existing staging container
       shell: |
         docker stop petclinic-staging || true
