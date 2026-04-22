@@ -31,10 +31,10 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 sh '''#!/bin/bash
-                    sudo apt-get update -qq
-                    which docker || sudo apt-get install -y -qq docker.io
-                    which fuser || sudo apt-get install -y -qq psmisc
-                    which ansible || sudo apt-get install -y -qq ansible
+                    apt-get update -qq
+                    which docker || apt-get install -y -qq docker.io
+                    which fuser || apt-get install -y -qq psmisc
+                    which ansible || apt-get install -y -qq ansible
                 '''
             }
         }
