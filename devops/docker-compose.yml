@@ -7,8 +7,6 @@ services:
     user: root
     ports:
       - "8085:8080"
-      - "8086:8081"
-      - "8087:8082"
       - "50000:50000"
     dns: 1.1.1.1
     volumes:
@@ -50,12 +48,39 @@ services:
     networks:
       - devops
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - devops
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3035:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - devops
+
 volumes:
   jenkins_home:
   sonarqube_data:
   sonarqube_logs:
   sonarqube_extensions:
   sonar_db_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
   devops:
