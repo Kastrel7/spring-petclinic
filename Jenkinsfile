@@ -256,7 +256,7 @@ pipeline {
                 ansiblePlaybook(
                     playbook: 'ansible/smoke-test.yml',
                     inventory: 'ansible/inventory.ini',
-                    extraVars: [url: "http://${EC2_IP}:${STAGING_PORT}/actuator/health"]
+                    extraVars: [url: "http://${EC2_IP}:8080/actuator/health"]
                 )
             }
         }
