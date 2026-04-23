@@ -21,25 +21,21 @@ pipeline {
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        // Increased to 60 min to account for the manual approval wait time
         timeout(time: 60, unit: 'MINUTES')
         timestamps()
     }
 
     stages {
-        // ── Install Dependencies ───────────────────────────────────────────
         stage('Install Dependencies') {
             steps {
                 sh '''#!/bin/bash
                     apt-get update -qq
                     which docker || apt-get install -y -qq docker.io
-                    which fuser || apt-get install -y -qq psmisc
                     which ansible || apt-get install -y -qq ansible
                 '''
             }
         }
 
-        // ── Checkout ──────────────────────────────────────────────────────
         stage('Checkout') {
             steps {
                 checkout([
@@ -54,14 +50,12 @@ pipeline {
             }
         }
 
-        // ── Compile ───────────────────────────────────────────────────────
         stage('Build') {
             steps {
                 sh 'mvn -B clean compile'
             }
         }
 
-        // ── Unit Tests + Coverage ──────────────────────────────────────────
         stage('Unit Tests') {
             steps {
                 sh 'mvn -B test -Dtest="!PostgresIntegrationTests"'
@@ -78,7 +72,6 @@ pipeline {
             }
         }
 
-        // ── Package ───────────────────────────────────────────────────────
         stage('Package') {
             steps {
                 sh 'mvn -B package -DskipTests'
@@ -86,7 +79,6 @@ pipeline {
             }
         }
 
-        // ── SonarQube Analysis ───────────────────────────────────────────
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv("${SONAR_SERVER}") {
@@ -101,7 +93,6 @@ pipeline {
             }
         }
 
-        // ── Quality Gate ─────────────────────────────────────────────────
         stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -110,29 +101,35 @@ pipeline {
             }
         }
 
-        // ── Build & Push Docker Image ───────────────────────────────
         stage('Build & Push Docker Image') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-credentials',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh '''#!/bin/bash
-                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                        docker build -t kastrel7/spring-petclinic:latest \
-                                    -t kastrel7/spring-petclinic:${BUILD_NUMBER} .
-                        docker push kastrel7/spring-petclinic:latest
-                        docker push kastrel7/spring-petclinic:${BUILD_NUMBER}
-                        docker logout
-                    '''
+                // withCredentials([usernamePassword(
+                //     credentialsId: 'dockerhub-credentials',
+                //     usernameVariable: 'DOCKER_USER',
+                //     passwordVariable: 'DOCKER_PASS'
+                // )]) {
+                //     sh '''#!/bin/bash
+                //         echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                //         docker build -t kastrel7/spring-petclinic:latest \
+                //                     -t kastrel7/spring-petclinic:${BUILD_NUMBER} .
+                //         docker push kastrel7/spring-petclinic:latest
+                //         docker push kastrel7/spring-petclinic:${BUILD_NUMBER}
+                //         docker logout
+                //     '''
+                // }
+
+                script {
+                    docker.withRegistry('https://registry.hub.docker.com', 'dockerhub-credentials') {
+                        def image = docker.build("kastrel7/spring-petclinic:${BUILD_NUMBER}")
+                        image.push()
+                        image.push('latest')
+                    }
                 }
             }
         }
 
-        // ── Deploy to Dev ────────────────────────────────────────────────
-        // Copies the JAR into a dev directory and starts it on DEV_PORT.
-        // Any existing process on that port is killed first for a clean deploy.
+
+
         stage('Deploy to Dev') {
             steps {
                 // sh '''#!/bin/bash
@@ -145,16 +142,13 @@ pipeline {
                 //     echo "Dev container started"
                 // '''
 
-                sh '''#!/bin/bash
-                    cd ansible
-                    ansible-playbook -i inventory.ini deploy-to-dev.yml
-                '''
+                ansiblePlaybook(
+                    playbook: 'ansible/deploy-to-dev.yml',
+                    inventory: 'ansible/inventory.ini'
+                )
             }
         }
 
-        // ── Smoke Test (Dev) ─────────────────────────────────────────────
-        // Polls the Spring Boot Actuator health endpoint every 5s for up to 60s.
-        // Fails the build if the app does not report UP within that window.
         stage('Smoke Test (Dev)') {
             steps {
                 // sh """
@@ -179,29 +173,24 @@ pipeline {
                 //     exit 1
                 // """
 
-                sh """#!/bin/bash
-                    cd ansible
-                    ansible-playbook -i inventory.ini smoke-test.yml \
-                        -e "url=http://${HOST_IP}:${DEV_PORT}/actuator/health"
-                """
+                ansiblePlaybook(
+                    playbook: 'ansible/smoke-test.yml',
+                    inventory: 'ansible/inventory.ini',
+                    extraVars: [url: "http://${HOST_IP}:${DEV_PORT}/actuator/health"]
+                )
             }
         }
 
-        // // ── Manual Approval Gate ────────────────────────────────────────
-        // // Pauses the pipeline and waits for a human to approve promotion.
-        // // Auto-aborts after 10 minutes if no action is taken.
-        // stage('Approval: Promote to Staging?') {
-        //     steps {
-        //         timeout(time: 10, unit: 'MINUTES') {
-        //             input message: 'Dev smoke tests passed. Promote to Staging?',
-        //                   ok: 'Yes, promote to Staging',
-        //                   submitter: 'admin'
-        //         }
-        //     }
-        // }
+        stage('Approval: Promote to Staging?') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    input message: 'Dev smoke tests passed. Promote to Staging?',
+                          ok: 'Yes, promote to Staging',
+                          submitter: 'admin'
+                }
+            }
+        }
 
-        // // ── Deploy to Staging ───────────────────────────────────────────
-        // // Promotes the same JAR that passed Dev smoke tests to the Staging environment.
         // stage('Deploy to Staging') {
         //     steps {
         //         // sh '''#!/bin/bash
@@ -214,15 +203,13 @@ pipeline {
         //         //     echo "Staging container started"
         //         // '''
 
-        //         sh '''#!/bin/bash
-        //             cd ansible
-        //             ansible-playbook -i inventory.ini deploy-to-staging.yml
-        //         '''
+        //         ansiblePlaybook(
+        //             playbook: 'ansible/deploy-to-staging.yml',
+        //             inventory: 'ansible/inventory.ini'
+        //         )
         //     }
         // }
 
-        // // ── Smoke Test (Staging) ───────────────────────────────────────
-        // // Same health check pattern as Dev but against the staging port.
         // stage('Smoke Test (Staging)') {
         //     steps {
         //         // sh """
@@ -247,38 +234,34 @@ pipeline {
         //         //     exit 1
         //         // """
 
-        //         sh """#!/bin/bash
-        //             cd ansible
-        //             ansible-playbook -i inventory.ini smoke-test.yml \
-        //                 -e "url=http://${HOST_IP}:${STAGING_PORT}/actuator/health"
-        //         """
+        //         ansiblePlaybook(
+        //             playbook: 'ansible/smoke-test.yml',
+        //             inventory: 'ansible/inventory.ini',
+        //             extraVars: [url: "http://${HOST_IP}:${STAGING_PORT}/actuator/health"]
+        //         )
         //     }
         // }
 
-        // ── Deploy to EC2 ───────────────────────────────────────
         stage('Deploy to Staging (EC2)') {
             steps {
-                sh '''#!/bin/bash
-                    cd ansible
-                    ansible-playbook -i inventory.ini provision-ec2.yml
-                '''
+                ansiblePlaybook(
+                    playbook: 'ansible/deploy-to-staging.yml',
+                    inventory: 'ansible/inventory.ini'
+                )
             }
         }
 
-        // ── Smoke Test (EC2) ──────────────────────────────────────────
-        // Health check against the EC2 instance to confirm deployment succeeded.
         stage('Smoke Test (EC2)') {
             steps {
-                sh """#!/bin/bash
-                    cd ansible
-                    ansible-playbook -i inventory.ini smoke-test.yml \
-                        -e "url=http://${EC2_IP}:8080/actuator/health"
-                """
+                ansiblePlaybook(
+                    playbook: 'ansible/smoke-test.yml',
+                    inventory: 'ansible/inventory.ini',
+                    extraVars: [url: "http://${EC2_IP}:${STAGING_PORT}/actuator/health"]
+                )
             }
         }
     }
 
-    // ── Post-build Slack notifications ────────────────────────────────────────────
     post {
         success {
             withCredentials([string(credentialsId: 'slack-webhook-url', variable: 'SLACK_WEBHOOK')]) {
