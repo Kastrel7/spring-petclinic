@@ -27,18 +27,22 @@
         append: yes
 
     - name: Pull PetClinic Docker image
-      shell: docker pull kastrel7/spring-petclinic:latest
+      community.docker.docker_image:
+        name: kastrel7/spring-petclinic
+        tag: latest
+        source: pull
 
     - name: Stop existing container if running
-      shell: docker stop petclinic || true
-
-    - name: Remove existing container if present
-      shell: docker rm petclinic || true
+      community.docker.docker_container:
+        name: petclinic
+        state: absent
+      ignore_errors: yes
 
     - name: Run PetClinic container
-      shell: |
-        docker run -d \
-          --name petclinic \
-          --restart unless-stopped \
-          -p 8080:8080 \
-          kastrel7/spring-petclinic:latest
+      community.docker.docker_container:
+        name: petclinic
+        image: kastrel7/spring-petclinic:latest
+        state: started
+        restart_policy: unless-stopped
+        ports:
+          - "8080:8080"

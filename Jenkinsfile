@@ -32,6 +32,7 @@ pipeline {
                     apt-get update -qq
                     which docker || apt-get install -y -qq docker.io
                     which ansible || apt-get install -y -qq ansible
+                    ansible-galaxy collection install community.docker
                 '''
             }
         }
@@ -103,27 +104,28 @@ pipeline {
 
         stage('Build & Push Docker Image') {
             steps {
-                // withCredentials([usernamePassword(
-                //     credentialsId: 'dockerhub-credentials',
-                //     usernameVariable: 'DOCKER_USER',
-                //     passwordVariable: 'DOCKER_PASS'
-                // )]) {
-                //     sh '''#!/bin/bash
-                //         echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                //         docker build -t kastrel7/spring-petclinic:latest \
-                //                     -t kastrel7/spring-petclinic:${BUILD_NUMBER} .
-                //         docker push kastrel7/spring-petclinic:latest
-                //         docker push kastrel7/spring-petclinic:${BUILD_NUMBER}
-                //         docker logout
-                //     '''
+                // script {
+                //     docker.withRegistry('https://registry.hub.docker.com', 'dockerhub-credentials') {
+                //         def image = docker.build("kastrel7/spring-petclinic:${BUILD_NUMBER}")
+                //         image.push()
+                //         image.push('latest')
+                //     }
                 // }
 
-                script {
-                    docker.withRegistry('https://registry.hub.docker.com', 'dockerhub-credentials') {
-                        def image = docker.build("kastrel7/spring-petclinic:${BUILD_NUMBER}")
-                        image.push()
-                        image.push('latest')
-                    }
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    ansiblePlaybook(
+                        playbook: 'ansible/build-and-push.yml',
+                        inventory: 'ansible/inventory.ini',
+                        extraVars: [
+                            docker_user: "${DOCKER_USER}",
+                            docker_pass: "${DOCKER_PASS}",
+                            build_number: "${BUILD_NUMBER}"
+                        ]
+                    )
                 }
             }
         }
@@ -245,7 +247,7 @@ pipeline {
         stage('Deploy to Staging (EC2)') {
             steps {
                 ansiblePlaybook(
-                    playbook: 'ansible/deploy-to-staging.yml',
+                    playbook: 'ansible/provision-ec2.yml',
                     inventory: 'ansible/inventory.ini'
                 )
             }

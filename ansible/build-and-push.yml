@@ -1,0 +1,32 @@
+---
+- name: Build and Push Docker Image
+  hosts: jenkins
+  tasks:
+    - name: Log in to DockerHub
+      community.docker.docker_login:
+        registry: https://index.docker.io/v1/
+        username: "{{ docker_user }}"
+        password: "{{ docker_pass }}"
+
+    - name: Build Docker image
+      community.docker.docker_image:
+        name: kastrel7/spring-petclinic
+        tag: "{{ build_number }}"
+        source: build
+        build:
+          path: "{{ playbook_dir }}/.."
+        push: yes
+
+    - name: Tag and push as latest
+      community.docker.docker_image:
+        name: kastrel7/spring-petclinic
+        tag: latest
+        source: build
+        build:
+          path: "{{ playbook_dir }}/.."
+        push: yes
+
+    - name: Log out of DockerHub
+      community.docker.docker_login:
+        registry: https://index.docker.io/v1/
+        state: absent
